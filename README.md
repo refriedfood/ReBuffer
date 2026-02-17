@@ -1,7 +1,7 @@
 <img src="https://ptpimg.me/bqqob0.png"/><br>
 # ReBuffer <br>
 Reload a webpage automatically when an HTML5 video buffers.<br>
-Works for Firefox, Waterfox, etc.<br>
-Cellphones untested.
-
+Light-weight, non-intrusive. Simple.<br>
+Works for Firefox, Waterfox, etc (Chrome is WIP).<br>
+Cellphones untested.<br>
 <img src="example.png"/>
