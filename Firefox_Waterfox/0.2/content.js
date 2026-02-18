@@ -24,7 +24,13 @@ function applyConfig(res) {
   if (!res) return;
   if (typeof res.enabled === "boolean") config.enabled = res.enabled;
   if (typeof res.timeoutMs === "number" && res.timeoutMs > 0) config.timeoutMs = res.timeoutMs;
-  if (typeof res.checkIntervalMs === "number" && res.checkIntervalMs > 0) config.checkIntervalMs = res.checkIntervalMs;
+  if (typeof res.checkIntervalMs === "number" && res.checkIntervalMs > 0) {
+    config.checkIntervalMs = res.checkIntervalMs;
+    if (intervalId !== null) {
+      clearInterval(intervalId);
+      intervalId = setInterval(tick, config.checkIntervalMs);
+    }
+  }
   if (typeof res.muteOnReload === "boolean") config.muteOnReload = res.muteOnReload;
   if (typeof res.reloadOnPauseStop === "boolean") config.reloadOnPauseStop = res.reloadOnPauseStop;
   if (typeof res.autoplayOnStart === "boolean") config.autoplayOnStart = res.autoplayOnStart;
@@ -96,6 +102,8 @@ function VideoTracker(video) {
   this.isBuffering = false;
   this.bufferingSince = null;
   this.pauseSince = video.paused ? Date.now() : null;
+  this.pipModeActive = false;
+  this.pipHangStartTs = null;
 
   this.onTimeUpdate = this.onTimeUpdate.bind(this);
   this.onPlay = this.onPlay.bind(this);
@@ -123,6 +131,8 @@ VideoTracker.prototype.onTimeUpdate = function () {
     this.lastProgressTs = now;
     this.isBuffering = false;
     this.bufferingSince = null;
+    this.pipModeActive = false;
+    this.pipHangStartTs = null;
   }
 };
 
@@ -132,6 +142,8 @@ VideoTracker.prototype.onPlay = function () {
   this.bufferingSince = null;
   this.lastProgressTs = Date.now();
   this.lastTime = this.video.currentTime || this.lastTime;
+  this.pipModeActive = false;
+  this.pipHangStartTs = null;
 };
 
 VideoTracker.prototype.onPause = function () {
@@ -146,6 +158,8 @@ VideoTracker.prototype.onEnded = function () {
   this.pauseSince = null;
   this.isBuffering = false;
   this.bufferingSince = null;
+  this.pipModeActive = false;
+  this.pipHangStartTs = null;
 };
 
 VideoTracker.prototype.onWaiting = function () {
@@ -169,14 +183,15 @@ VideoTracker.prototype.onCanPlay = function () {
   this.bufferingSince = null;
 };
 
-VideoTracker.prototype.shouldReload = function (now) {
+VideoTracker.prototype.isHungNormal = function (now, timeoutMs) {
   if (!config.enabled) return false;
   if (this.video.ended) return false;
+
   var paused = this.video.paused;
   if (paused) {
     if (!config.reloadOnPauseStop) return false;
     if (!this.pauseSince) this.pauseSince = now;
-    if (now - this.pauseSince >= config.timeoutMs) return true;
+    if (now - this.pauseSince >= timeoutMs) return true;
     return false;
   } else {
     if (this.pauseSince) {
@@ -184,17 +199,124 @@ VideoTracker.prototype.shouldReload = function (now) {
       this.lastProgressTs = now;
     }
   }
+
   var sinceLastProgress = now - this.lastProgressTs;
-  if (sinceLastProgress >= config.timeoutMs) {
+  if (sinceLastProgress >= timeoutMs) {
     return true;
   }
+
   if (this.isBuffering && this.bufferingSince != null) {
     var bufferingFor = now - this.bufferingSince;
-    if (bufferingFor >= config.timeoutMs) {
+    if (bufferingFor >= timeoutMs) {
       return true;
     }
   }
+
   return false;
+};
+
+VideoTracker.prototype.isHungPiP = function (now, timeoutMs) {
+  if (!config.enabled) return false;
+  if (this.video.ended) return false;
+
+  var sinceLastProgress = now - this.lastProgressTs;
+  if (sinceLastProgress >= timeoutMs) {
+    return true;
+  }
+
+  if (this.isBuffering && this.bufferingSince != null) {
+    var bufferingFor = now - this.bufferingSince;
+    if (bufferingFor >= timeoutMs) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+VideoTracker.prototype.shouldReloadNormal = function (now) {
+  return this.isHungNormal(now, config.timeoutMs);
+};
+
+VideoTracker.prototype.handlePiP = function (now) {
+  var pipDetectMs = config.timeoutMs;
+  if (pipDetectMs < 3000) pipDetectMs = 3000;
+  var pipMaxMs = pipDetectMs * 4;
+  if (pipMaxMs < 25000) pipMaxMs = 25000;
+
+  if (!this.pipModeActive) {
+    if (!this.isHungPiP(now, pipDetectMs)) return false;
+    this.pipModeActive = true;
+    this.pipHangStartTs = now;
+    this.resetPiP();
+    return false;
+  } else {
+    if (!this.isHungPiP(now, pipDetectMs)) {
+      this.pipModeActive = false;
+      this.pipHangStartTs = null;
+      return false;
+    }
+    if (this.pipHangStartTs == null) {
+      this.pipHangStartTs = now;
+      return false;
+    }
+    if (now - this.pipHangStartTs >= pipMaxMs) {
+      this.pipModeActive = false;
+      this.pipHangStartTs = null;
+      return true;
+    }
+    return false;
+  }
+};
+
+VideoTracker.prototype.resetPiP = function () {
+  var v = this.video;
+  if (!v) return;
+  var currentTime = 0;
+  try {
+    currentTime = v.currentTime || 0;
+  } catch (e) {}
+  try {
+    if (typeof v.pause === "function") {
+      v.pause();
+    }
+  } catch (e1) {}
+  try {
+    if (typeof v.load === "function") {
+      v.load();
+    }
+  } catch (e2) {}
+  var self = this;
+  function restoreAndPlay() {
+    try {
+      v.removeEventListener("canplay", restoreAndPlay);
+      v.removeEventListener("loadedmetadata", restoreAndPlay);
+    } catch (e0) {}
+    try {
+      if (currentTime > 0 && !isNaN(currentTime)) {
+        v.currentTime = currentTime;
+      }
+    } catch (e3) {}
+    try {
+      if (typeof v.play === "function") {
+        var p = v.play();
+        if (p && typeof p.catch === "function") {
+          p.catch(function () {});
+        }
+      }
+    } catch (e4) {}
+    self.lastProgressTs = Date.now();
+    self.lastTime = v.currentTime || self.lastTime;
+  }
+  try {
+    v.addEventListener("canplay", restoreAndPlay, { once: true });
+    v.addEventListener("loadedmetadata", restoreAndPlay, { once: true });
+  } catch (e5) {}
+  this.isBuffering = false;
+  this.bufferingSince = null;
+  this.pauseSince = null;
+  this.lastTime = currentTime;
+  this.lastProgressTs = Date.now();
 };
 
 VideoTracker.prototype.detach = function () {
@@ -271,32 +393,53 @@ function detachTrackers() {
 
 function tick() {
   if (!config.enabled) return;
+
   var now = Date.now();
+  var pipEl = null;
+  try {
+    pipEl = document.pictureInPictureElement || null;
+  } catch (e0) {
+    pipEl = null;
+  }
+
   var videos = document.querySelectorAll("video");
   for (var i = 0; i < videos.length; i++) {
     var video = videos[i];
     var tracker = trackers.get(video);
     if (!tracker) continue;
-    if (tracker.shouldReload(now)) {
-      if (observer) {
-        observer.disconnect();
-        observer = null;
-      }
-      if (intervalId !== null) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
-      if (config.muteOnReload) {
-        try {
-          video.muted = true;
-          video.volume = 0;
-        } catch (e) {}
-      }
-      try {
-        browser.runtime.sendMessage({ type: "rebuffer_hung" });
-      } catch (e2) {}
-      break;
+
+    var isPiP = pipEl && pipEl === video;
+    var shouldReload = false;
+
+    if (isPiP) {
+      shouldReload = tracker.handlePiP(now);
+    } else {
+      shouldReload = tracker.shouldReloadNormal(now);
     }
+
+    if (!shouldReload) continue;
+
+    if (observer) {
+      observer.disconnect();
+      observer = null;
+    }
+    if (intervalId !== null) {
+      clearInterval(intervalId);
+      intervalId = null;
+    }
+
+    if (config.muteOnReload) {
+      try {
+        video.muted = true;
+        video.volume = 0;
+      } catch (e) {}
+    }
+
+    try {
+      browser.runtime.sendMessage({ type: "rebuffer_hung" });
+    } catch (e2) {}
+
+    break;
   }
 }
 
