@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "ReBuffer",
+  "short_name": "ReBuffer",
+  "version": "0.2",
+  "description": "Reload a webpage automatically when an HTML5 video buffers.",
+  "author": "refried",
+  "permissions": [
+    "tabs",
+    "storage",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "service_worker.js"
+  },
+  "icons": {
+    "16": "icons/rebuffer_16.png",
+    "32": "icons/rebuffer_32.png",
+    "48": "icons/rebuffer_48.png",
+    "64": "icons/rebuffer_64.png",
+    "128": "icons/rebuffer_128.png",
+    "192": "icons/rebuffer_192.png"
+  },
+  "action": {
+    "default_title": "ReBuffer",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/rebuffer_16.png",
+      "32": "icons/rebuffer_32.png",
+      "48": "icons/rebuffer_48.png",
+      "64": "icons/rebuffer_64.png",
+      "128": "icons/rebuffer_128.png",
+      "192": "icons/rebuffer_192.png"
+    }
+  },
+  "options_page": "options.html",
+  "options_ui": {
+    "page": "options.html",
+    "browser_style": false
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}
