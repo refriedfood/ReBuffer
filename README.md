@@ -6,3 +6,5 @@ Light-weight, non-intrusive. Simple.<br>
 Works for Firefox, Waterfox, etc (Chrome is WIP).<br>
 Cellphones untested.<br>
 <img src="example.png"/>
+#
+https://addons.mozilla.org/en-US/firefox/addon/rebuffer
